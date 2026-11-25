@@ -56,13 +56,19 @@
   #hint { color: var(--muted); font-size: 14px; margin-top: 14px; height: 18px; }
   body.holding #time { color: var(--hold); }
   body.ready #time { color: var(--ready); }
-  body.running header, body.running #scramble, body.running #stats, body.running #list, body.running #hint, body.running #scrImg { visibility: hidden; }
+  body.running header, body.running #scramble, body.running #stats, body.running #list, body.running #hint, body.running #scrImg, body.running #rank { visibility: hidden; }
 
   #stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin: 0 16px; }
   .stat { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 8px 6px; text-align: center; }
   .stat b { display: block; font: 600 17px ui-monospace, Menlo, monospace; font-variant-numeric: tabular-nums; }
   .stat span { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; }
 
+  #rank { margin: 8px 16px 0; font-size: 12.5px; line-height: 1.5; color: var(--muted); text-align: center; }
+  #rank b { color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; }
+  #rank:empty { display: none; }
+  label.opt select { background: #252b33; color: var(--text); border: 1px solid var(--line); border-radius: 8px;
+    padding: 4px 6px; font-size: 15px; max-width: 55%; }
+  .note { color: var(--muted); font-size: 11px; line-height: 1.4; margin: 12px 0 0; font-family: inherit; }
   #list { margin: 10px 16px 12px; max-height: 26vh; overflow-y: auto; display: flex; flex-wrap: wrap; gap: 6px;
     -webkit-overflow-scrolling: touch; touch-action: pan-y; }
   #list:empty::before { content: "Ingen tider endnu"; color: var(--muted); font-size: 14px; }
@@ -111,6 +117,8 @@
     <div class="stat"><b id="sCount">0</b><span>Antal</span></div>
   </div>
 
+  <div id="rank"></div>
+
   <div id="list"></div>
 
   <dialog id="solveDlg">
@@ -129,6 +137,7 @@
     <label class="opt">15 sek. inspektion <input type="checkbox" id="optInspect"></label>
     <label class="opt">Skjul tid under løsning <input type="checkbox" id="optHide"></label>
     <label class="opt">Vis billede af scramble <input type="checkbox" id="optImg"></label>
+    <label class="opt">Land til placering <select id="optCountry"><option value="DK">Danmark</option></select></label>
     <button class="wide" id="newScr">Nyt scramble</button>
     <h3 id="menuSess">Session</h3>
     <button class="wide" id="newSess">Ny session</button>
@@ -136,6 +145,7 @@
     <button class="wide danger" id="clearAll">Slet alle tider i session</button>
     <button class="wide danger" id="delSess">Slet session</button>
     <button class="wide" id="menuClose">Luk</button>
+    <p class="note" id="wcaNote"></p>
   </dialog>
 
 <script>
@@ -162,6 +172,7 @@
   }
   state.last = state.last || {};
   if (state.showImg === undefined) state.showImg = true;
+  if (!state.country) state.country = "DK";
   if (!state.sessions.length) state.cur = newSession("333", "Session 1").id;
   const sess = () => state.sessions.find(s => s.id === state.cur) || state.sessions[0];
   const solves = () => sess().solves;
@@ -305,6 +316,74 @@
     return mid.reduce((a, b) => a + b, 0) / mid.length;
   }
 
+  // ---------- world ranking (WCA data, see tools/build_ranks.py) ----------
+  // Each list is a sample of the sorted best results in centiseconds:
+  // { n: people, i: [index], v: [value] }. We estimate how many are faster.
+  const MEAN3 = ["666", "777", "333bf"];  // WCA ranks these by mean of 3
+  const WCA_EVENT = { "222": "222", "333": "333", "444": "444", "555": "555", "666": "666", "777": "777",
+    "333oh": "333oh", "333bf": "333bf", pyram: "pyram", skewb: "skewb", minx: "minx", sq1: "sq1", clock: "clock" };
+  const ranks = { world: null, country: null, countries: null };
+  const getJSON = url => fetch(url).then(r => r.ok ? r.json() : null).catch(() => null);
+  async function loadRanks() {
+    const [w, c] = await Promise.all([getJSON("ranks/world.json"), getJSON(`ranks/c/${state.country}.json`)]);
+    ranks.world = w; ranks.country = c; renderRank();
+  }
+  async function fillCountries() {
+    if (!ranks.countries) ranks.countries = await getJSON("ranks/countries.json");
+    const sel = $("optCountry");
+    if (ranks.countries && sel.options.length < 2) {
+      sel.innerHTML = "";
+      for (const [iso, name] of ranks.countries.countries) sel.add(new Option(name, iso));
+    }
+    sel.value = state.country;
+    const d = (ranks.world || ranks.countries || {}).date;
+    $("wcaNote").textContent = "Placeringer er et skøn ud fra officielle WCA-resultater, ikke en officiel placering. " +
+      "This information is based on competition results owned and maintained by the World Cube Association, " +
+      "published at https://worldcubeassociation.org/results" + (d ? " as of " + d + "." : ".");
+  }
+  function countFaster(d, t) {
+    const { n, i, v } = d;
+    if (t <= v[0]) return 0;
+    if (t > v[v.length - 1]) return n;
+    let lo = 0, hi = v.length - 1;  // last k with v[k] < t
+    while (lo < hi) { const m = (lo + hi + 1) >> 1; if (v[m] < t) lo = m; else hi = m - 1; }
+    const f = (t - v[lo]) / (v[lo + 1] - v[lo]);
+    return Math.round(i[lo] + 1 + f * (i[lo + 1] - i[lo] - 1));
+  }
+  function bestAverage(list, n) {
+    let best = Infinity;
+    for (let k = n; k <= list.length; k++) {
+      const v = list.slice(k - n, k).map(value);
+      let a;
+      if (n === 3) a = v.includes(Infinity) ? Infinity : (v[0] + v[1] + v[2]) / 3;
+      else { v.sort((x, y) => x - y); const mid = v.slice(1, -1); a = mid.includes(Infinity) ? Infinity : mid.reduce((x, y) => x + y, 0) / mid.length; }
+      best = Math.min(best, a);
+    }
+    return best;
+  }
+  const flag = iso => iso.toUpperCase().replace(/./g, ch => String.fromCodePoint(127397 + ch.charCodeAt(0)));
+  const num = n => n.toLocaleString("da-DK");
+  function renderRank() {
+    const el = $("rank"), p = sess().puzzle, ev = WCA_EVENT[p];
+    const w = ranks.world?.events?.[ev], c = ranks.country?.events?.[ev];
+    const all = state.sessions.filter(s => s.puzzle === p);
+    if (!w || !all.some(s => s.solves.length)) { el.innerHTML = ""; return; }
+    const single = Math.min(...all.flatMap(s => s.solves.map(value)));
+    const n = MEAN3.includes(p) ? 3 : 5;
+    const average = Math.min(...all.map(s => bestAverage(s.solves, n)));
+    const line = (label, ms, kind) => {
+      if (!w[kind] || ms === Infinity) return "";
+      // WCA counts in centiseconds: singles are cut off, averages rounded
+      const cs = kind === "s" ? Math.floor(ms / 10) : Math.round(ms / 10);
+      const wr = countFaster(w[kind], cs) + 1;
+      const top = wr / w[kind].n * 100;
+      let out = `${label} <b>${fmt(ms)}</b>: 🌍 nr. <b>~${num(wr)}</b> (top ${top < 1 ? top.toFixed(1) : Math.ceil(top)} %)`;
+      if (c?.[kind]) out += ` · ${flag(state.country)} nr. <b>~${num(countFaster(c[kind], cs) + 1)}</b>`;
+      return `<div>${out}</div>`;
+    };
+    el.innerHTML = line("Bedste", single, "s") + line(n === 3 ? "Bedste Mo3" : "Bedste Ao5", average, "a");
+  }
+
   // ---------- render ----------
   const $ = id => document.getElementById(id);
   const timeEl = $("time"), hintEl = $("hint");
@@ -339,6 +418,7 @@
     $("sAo5").textContent = fmt(avg(5));
     $("sAo12").textContent = fmt(avg(12));
     $("sCount").textContent = solves().length;
+    renderRank();
     const list = $("list");
     list.innerHTML = "";
     for (let i = solves().length - 1; i >= 0; i--) {
@@ -421,14 +501,24 @@
   // mouse / keyboard for testing on a computer
   pad.addEventListener("mousedown", e => { if (e.button === 0) press(); });
   pad.addEventListener("mouseup", () => { if (ignoreNextRelease) { ignoreNextRelease = false; return; } release(); });
-  let keyDown = false;
+  document.addEventListener("mousedown", e => { if (phase === "running" && !pad.contains(e.target)) { e.preventDefault(); stop(); } });
+  // keyboard: any key works. Hold one key to get ready, release it to start,
+  // and any key stops the timer.
+  const MODIFIERS = ["Shift", "Control", "Alt", "Meta", "CapsLock", "Fn", "OS"];
+  let startKey = null;
   document.addEventListener("keydown", e => {
-    if (e.code !== "Space" || document.querySelector("dialog[open]")) return;
-    e.preventDefault(); if (keyDown) return; keyDown = true; press();
+    if (document.querySelector("dialog[open]") || MODIFIERS.includes(e.key)) return;
+    if (phase === "running") { e.preventDefault(); startKey = null; stop(); ignoreNextRelease = false; return; }
+    if (e.metaKey || e.ctrlKey || e.altKey) return;  // leave shortcuts like Cmd+R alone
+    e.preventDefault();
+    // don't let the key also change a dropdown or click a button
+    if (document.activeElement && document.activeElement !== document.body) document.activeElement.blur();
+    if (e.repeat || startKey) return;
+    startKey = e.code; press();
   });
   document.addEventListener("keyup", e => {
-    if (e.code !== "Space") return;
-    keyDown = false; if (ignoreNextRelease) { ignoreNextRelease = false; return; } release();
+    if (e.code !== startKey) { if (!document.querySelector("dialog[open]") && !MODIFIERS.includes(e.key)) e.preventDefault(); return; }
+    e.preventDefault(); startKey = null; release();
   });
 
   // ---------- screen wake lock ----------
@@ -483,12 +573,14 @@
 
   $("menuBtn").onclick = () => {
     $("optInspect").checked = state.inspect; $("optHide").checked = state.hide; $("optImg").checked = state.showImg;
+    fillCountries();
     $("menuSess").textContent = `Session: ${puzzleName(sess().puzzle)} – ${sess().name}`;
     $("menuDlg").showModal();
   };
   $("optInspect").onchange = e => { state.inspect = e.target.checked; save(); };
   $("optHide").onchange = e => { state.hide = e.target.checked; save(); };
   $("optImg").onchange = e => { state.showImg = e.target.checked; save(); if (scramble) renderScramble(); };
+  $("optCountry").onchange = e => { state.country = e.target.value; save(); loadRanks(); };
   $("newScr").onclick = () => { newScramble(); $("menuDlg").close(); };
   $("newSess").onclick = () => { if (createSession()) $("menuDlg").close(); };
   $("renameSess").onclick = () => {
@@ -509,7 +601,7 @@
   $("menuClose").onclick = () => $("menuDlg").close();
   $("scramble").onclick = () => { if (phase === "idle") newScramble(); };
 
-  newScramble(); render(); tick();
+  newScramble(); render(); tick(); loadRanks();
 
   // ---------- offline ----------
   if ("serviceWorker" in navigator) {

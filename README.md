@@ -6,6 +6,20 @@ Timer til speedcubere. Den virker på telefonen uden internet.
 - Tryk hvor som helst på skærmen for at stoppe.
 - Tryk på en tid i listen for at give +2, DNF eller slette den.
 - Under **Menu** kan du slå 15 sekunders inspektion til.
+- **På computer:** hold en vilkårlig tast nede, til tallet bliver grønt, og slip for at starte.
+  Tryk på en vilkårlig tast (eller klik) for at stoppe.
+
+## Placering i verden
+Under statistikken vises, hvor din bedste tid og dit bedste gennemsnit ville ligge på WCA's
+verdensrangliste og i dit land (vælg land i **Menu**, Danmark er standard). Det er et skøn ud
+fra officielle konkurrenceresultater, ikke en officiel placering. 6x6, 7x7 og 3x3 Blind
+sammenlignes med Mo3, de andre med Ao5, ligesom WCA gør.
+
+Tallene ligger i `ranks/` og laves af `tools/build_ranks.py`, som henter WCA's offentlige
+eksport. GitHub Action'en `.github/workflows/ranks.yml` kører den hver mandag.
+
+> This information is based on competition results owned and maintained by the World Cube
+> Association, published at https://worldcubeassociation.org/results.
 
 ## Puslespil og sessioner
 - Vælg puslespil i menuen øverst til venstre: 2x2–7x7, 3x3 OH, 3x3 Blind, Pyraminx,
