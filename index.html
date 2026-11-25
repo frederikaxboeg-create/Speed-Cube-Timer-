@@ -1,0 +1,318 @@
+<!doctype html>
+<html lang="da">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>Cube Timer</title>
+<meta name="theme-color" content="#111418">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Cube Timer">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-180.png">
+<style>
+  :root {
+    --bg: #111418;
+    --panel: #1b1f25;
+    --line: #2a3038;
+    --text: #eef1f4;
+    --muted: #8a94a0;
+    --ready: #34d399;
+    --hold: #f87171;
+    --accent: #60a5fa;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    overscroll-behavior: none; -webkit-user-select: none; user-select: none; }
+  body { display: flex; flex-direction: column;
+    padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); }
+
+  header { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px 4px; }
+  header h1 { font-size: 17px; margin: 0; font-weight: 600; letter-spacing: .2px; }
+  .icon-btn { background: var(--panel); border: 1px solid var(--line); color: var(--text);
+    border-radius: 10px; padding: 8px 12px; font-size: 14px; }
+
+  #scramble { margin: 8px 16px 0; padding: 12px 14px; background: var(--panel); border: 1px solid var(--line);
+    border-radius: 14px; font: 600 19px/1.45 ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    text-align: center; word-spacing: 4px; min-height: 64px; }
+  #scramble small { display: block; font: 12px -apple-system, sans-serif; color: var(--muted); margin-top: 6px; }
+
+  #pad { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
+    touch-action: none; min-height: 200px; }
+  #time { font: 700 clamp(64px, 22vw, 120px)/1 ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    font-variant-numeric: tabular-nums; transition: color .08s; }
+  #hint { color: var(--muted); font-size: 14px; margin-top: 14px; height: 18px; }
+  body.holding #time { color: var(--hold); }
+  body.ready #time { color: var(--ready); }
+  body.running header, body.running #scramble, body.running #stats, body.running #list, body.running #hint { visibility: hidden; }
+
+  #stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin: 0 16px; }
+  .stat { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 8px 6px; text-align: center; }
+  .stat b { display: block; font: 600 17px ui-monospace, Menlo, monospace; font-variant-numeric: tabular-nums; }
+  .stat span { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; }
+
+  #list { margin: 10px 16px 12px; max-height: 26vh; overflow-y: auto; display: flex; flex-wrap: wrap; gap: 6px;
+    -webkit-overflow-scrolling: touch; touch-action: pan-y; }
+  #list:empty::before { content: "Ingen tider endnu"; color: var(--muted); font-size: 14px; }
+  .t { background: var(--panel); border: 1px solid var(--line); color: var(--text); border-radius: 9px;
+    padding: 6px 10px; font: 15px ui-monospace, Menlo, monospace; font-variant-numeric: tabular-nums; }
+  .t i { color: var(--muted); font-style: normal; font-size: 11px; margin-right: 6px; }
+  .t.pb { border-color: var(--ready); }
+
+  dialog { background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 16px;
+    padding: 18px; width: min(340px, calc(100vw - 32px)); }
+  dialog::backdrop { background: rgba(0,0,0,.6); }
+  dialog h2 { margin: 0 0 4px; font-size: 26px; font-family: ui-monospace, Menlo, monospace; }
+  dialog p { margin: 0 0 14px; color: var(--muted); font: 13px ui-monospace, Menlo, monospace; }
+  .row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+  .row button, .wide { background: #252b33; color: var(--text); border: 1px solid var(--line); border-radius: 10px;
+    padding: 12px 0; font-size: 15px; }
+  .row button.on { border-color: var(--accent); color: var(--accent); }
+  .wide { width: 100%; margin-top: 8px; }
+  .danger { color: var(--hold); }
+  label.opt { display: flex; justify-content: space-between; align-items: center; padding: 10px 0; font-size: 15px;
+    border-bottom: 1px solid var(--line); }
+  label.opt input { width: 22px; height: 22px; }
+</style>
+</head>
+<body>
+  <header>
+    <h1>Cube Timer</h1>
+    <button class="icon-btn" id="menuBtn">Menu</button>
+  </header>
+
+  <div id="scramble"></div>
+
+  <div id="pad">
+    <div id="time">0.00</div>
+    <div id="hint">Hold fingeren på skærmen, og slip for at starte</div>
+  </div>
+
+  <div id="stats">
+    <div class="stat"><b id="sBest">–</b><span>Bedste</span></div>
+    <div class="stat"><b id="sAo5">–</b><span>Ao5</span></div>
+    <div class="stat"><b id="sAo12">–</b><span>Ao12</span></div>
+    <div class="stat"><b id="sCount">0</b><span>Antal</span></div>
+  </div>
+
+  <div id="list"></div>
+
+  <dialog id="solveDlg">
+    <h2 id="dTime"></h2>
+    <p id="dScr"></p>
+    <div class="row">
+      <button id="dOk">OK</button>
+      <button id="dP2">+2</button>
+      <button id="dDnf">DNF</button>
+    </div>
+    <button class="wide danger" id="dDel">Slet tid</button>
+    <button class="wide" id="dClose">Luk</button>
+  </dialog>
+
+  <dialog id="menuDlg">
+    <label class="opt">15 sek. inspektion <input type="checkbox" id="optInspect"></label>
+    <label class="opt">Skjul tid under løsning <input type="checkbox" id="optHide"></label>
+    <button class="wide" id="newScr">Nyt scramble</button>
+    <button class="wide danger" id="clearAll">Slet alle tider</button>
+    <button class="wide" id="menuClose">Luk</button>
+  </dialog>
+
+<script>
+(() => {
+  // ---------- storage (safe) ----------
+  const KEY = "cubetimer.v1";
+  function load() {
+    try { return JSON.parse(localStorage.getItem(KEY)) || {}; } catch { return {}; }
+  }
+  function save() {
+    try { localStorage.setItem(KEY, JSON.stringify(state)); } catch {}
+  }
+  const state = Object.assign({ solves: [], inspect: false, hide: false }, load());
+  // solve: { ms, pen: 0 | 2 | "dnf", scr, at }
+
+  // ---------- scramble (3x3, 20 moves) ----------
+  const FACES = ["U", "D", "R", "L", "F", "B"];
+  const AXIS = { U: 0, D: 0, R: 1, L: 1, F: 2, B: 2 };
+  const SUF = ["", "'", "2"];
+  function makeScramble(n = 20) {
+    const out = [];
+    while (out.length < n) {
+      const f = FACES[Math.floor(Math.random() * 6)];
+      const a = out[out.length - 1], b = out[out.length - 2];
+      if (a && a[0] === f) continue;
+      if (a && b && AXIS[a[0]] === AXIS[f] && AXIS[b[0]] === AXIS[f]) continue;
+      out.push(f + SUF[Math.floor(Math.random() * 3)]);
+    }
+    return out.join(" ");
+  }
+  let scramble = makeScramble();
+
+  // ---------- formatting & stats ----------
+  const value = s => s.pen === "dnf" ? Infinity : s.ms + (s.pen === 2 ? 2000 : 0);
+  function fmt(ms) {
+    if (ms === Infinity) return "DNF";
+    if (ms == null || isNaN(ms)) return "–";
+    const cs = Math.floor(ms / 10);
+    const m = Math.floor(cs / 6000), s = Math.floor(cs / 100) % 60, c = cs % 100;
+    const ss = m ? String(s).padStart(2, "0") : String(s);
+    return (m ? m + ":" : "") + ss + "." + String(c).padStart(2, "0");
+  }
+  const fmtSolve = s => s.pen === "dnf" ? "DNF" : fmt(value(s)) + (s.pen === 2 ? "+" : "");
+  function avg(n) {
+    if (state.solves.length < n) return null;
+    const v = state.solves.slice(-n).map(value).sort((a, b) => a - b);
+    const mid = v.slice(1, -1);
+    if (mid.includes(Infinity)) return Infinity;
+    return mid.reduce((a, b) => a + b, 0) / mid.length;
+  }
+
+  // ---------- render ----------
+  const $ = id => document.getElementById(id);
+  const timeEl = $("time"), hintEl = $("hint");
+  function renderScramble() {
+    $("scramble").innerHTML = scramble + "<small>Tryk her for nyt scramble</small>";
+  }
+  function render() {
+    const vals = state.solves.map(value);
+    const best = vals.length ? Math.min(...vals) : null;
+    $("sBest").textContent = best == null ? "–" : fmt(best);
+    $("sAo5").textContent = fmt(avg(5));
+    $("sAo12").textContent = fmt(avg(12));
+    $("sCount").textContent = state.solves.length;
+    const list = $("list");
+    list.innerHTML = "";
+    for (let i = state.solves.length - 1; i >= 0; i--) {
+      const s = state.solves[i];
+      const b = document.createElement("button");
+      b.className = "t" + (best !== Infinity && value(s) === best ? " pb" : "");
+      b.innerHTML = `<i>${i + 1}</i>${fmtSolve(s)}`;
+      b.onclick = () => openSolve(i);
+      list.appendChild(b);
+    }
+  }
+
+  // ---------- timer state machine ----------
+  // idle -> (inspect) -> holding -> ready -> running -> idle
+  let phase = "idle", t0 = 0, raf = 0, holdTimer = 0, inspectStart = 0, inspectPen = 0;
+  const HOLD_MS = 300;
+
+  function setBody() {
+    document.body.className = phase === "holding" ? "holding" : phase === "ready" ? "ready" : phase === "running" ? "running" : "";
+  }
+  function tick() {
+    if (phase === "running") {
+      timeEl.textContent = state.hide ? "…" : fmt(performance.now() - t0);
+    } else if (phase === "inspect" || ((phase === "holding" || phase === "ready") && inspectStart)) {
+      const left = 15 - Math.floor((performance.now() - inspectStart) / 1000);
+      timeEl.textContent = left > 0 ? left : left > -2 ? "+2" : "DNF";
+    }
+    raf = requestAnimationFrame(tick);
+  }
+
+  function press() {
+    if (phase === "running") { stop(); return; }
+    if (phase === "idle" && state.inspect) {
+      phase = "inspect"; inspectStart = performance.now();
+      hintEl.textContent = "Inspektion – hold for at gøre klar";
+      wakeLock(); setBody(); return;
+    }
+    if (phase === "idle" || phase === "inspect") {
+      phase = "holding"; setBody();
+      if (!inspectStart) timeEl.textContent = "0.00";
+      holdTimer = setTimeout(() => { if (phase === "holding") { phase = "ready"; setBody(); } }, HOLD_MS);
+    }
+  }
+  function release() {
+    clearTimeout(holdTimer);
+    if (phase === "ready") start();
+    else if (phase === "holding") { phase = inspectStart ? "inspect" : "idle"; setBody(); }
+  }
+  function start() {
+    if (inspectStart) {
+      const over = (performance.now() - inspectStart) / 1000 - 15;
+      inspectPen = over > 2 ? "dnf" : over > 0 ? 2 : 0;
+    } else inspectPen = 0;
+    inspectStart = 0;
+    phase = "running"; t0 = performance.now(); setBody(); wakeLock();
+  }
+  function stop() {
+    const ms = Math.round(performance.now() - t0);
+    phase = "idle"; setBody();
+    const s = { ms, pen: inspectPen, scr: scramble, at: Date.now() };
+    state.solves.push(s); save();
+    timeEl.textContent = fmtSolve(s);
+    hintEl.textContent = "Tryk på en tid nedenfor for +2, DNF eller slet";
+    scramble = makeScramble(); renderScramble(); render();
+    releaseWake();
+    // ignore the release of this same touch
+    ignoreNextRelease = true;
+  }
+  let ignoreNextRelease = false;
+
+  const pad = $("pad");
+  const down = e => { e.preventDefault(); if (document.querySelector("dialog[open]")) return; press(); };
+  const up = e => { e.preventDefault(); if (ignoreNextRelease) { ignoreNextRelease = false; return; } release(); };
+  pad.addEventListener("touchstart", down, { passive: false });
+  pad.addEventListener("touchend", up, { passive: false });
+  pad.addEventListener("touchcancel", up, { passive: false });
+  // stopping must work anywhere on screen
+  document.addEventListener("touchstart", e => { if (phase === "running" && !pad.contains(e.target)) { e.preventDefault(); stop(); } }, { passive: false });
+  document.addEventListener("touchend", e => { if (!pad.contains(e.target) && ignoreNextRelease) { e.preventDefault(); ignoreNextRelease = false; } }, { passive: false });
+  // mouse / keyboard for testing on a computer
+  pad.addEventListener("mousedown", e => { if (e.button === 0) press(); });
+  pad.addEventListener("mouseup", () => { if (ignoreNextRelease) { ignoreNextRelease = false; return; } release(); });
+  let keyDown = false;
+  document.addEventListener("keydown", e => {
+    if (e.code !== "Space" || document.querySelector("dialog[open]")) return;
+    e.preventDefault(); if (keyDown) return; keyDown = true; press();
+  });
+  document.addEventListener("keyup", e => {
+    if (e.code !== "Space") return;
+    keyDown = false; if (ignoreNextRelease) { ignoreNextRelease = false; return; } release();
+  });
+
+  // ---------- screen wake lock ----------
+  let lock = null;
+  async function wakeLock() { try { lock = await navigator.wakeLock?.request("screen"); } catch {} }
+  function releaseWake() { try { lock?.release(); } catch {} lock = null; }
+
+  // ---------- dialogs ----------
+  let cur = -1;
+  function openSolve(i) {
+    cur = i; const s = state.solves[i];
+    $("dTime").textContent = fmtSolve(s);
+    $("dScr").textContent = s.scr;
+    $("dOk").classList.toggle("on", s.pen === 0);
+    $("dP2").classList.toggle("on", s.pen === 2);
+    $("dDnf").classList.toggle("on", s.pen === "dnf");
+    $("solveDlg").showModal();
+  }
+  function setPen(p) { state.solves[cur].pen = p; save(); render(); openSolveRefresh(); }
+  function openSolveRefresh() { $("solveDlg").close(); openSolve(cur); }
+  $("dOk").onclick = () => setPen(0);
+  $("dP2").onclick = () => setPen(2);
+  $("dDnf").onclick = () => setPen("dnf");
+  $("dDel").onclick = () => { state.solves.splice(cur, 1); save(); render(); $("solveDlg").close(); timeEl.textContent = "0.00"; };
+  $("dClose").onclick = () => $("solveDlg").close();
+
+  $("menuBtn").onclick = () => { $("optInspect").checked = state.inspect; $("optHide").checked = state.hide; $("menuDlg").showModal(); };
+  $("optInspect").onchange = e => { state.inspect = e.target.checked; save(); };
+  $("optHide").onchange = e => { state.hide = e.target.checked; save(); };
+  $("newScr").onclick = () => { scramble = makeScramble(); renderScramble(); $("menuDlg").close(); };
+  $("clearAll").onclick = () => {
+    if (confirm("Slet alle tider?")) { state.solves = []; save(); render(); timeEl.textContent = "0.00"; $("menuDlg").close(); }
+  };
+  $("menuClose").onclick = () => $("menuDlg").close();
+  $("scramble").onclick = () => { if (phase === "idle") { scramble = makeScramble(); renderScramble(); } };
+
+  renderScramble(); render(); tick();
+
+  // ---------- offline ----------
+  if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
+})();
+</script>
+</body>
+</html>
