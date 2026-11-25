@@ -45,6 +45,10 @@
   #scramble.long { font-size: 13px; word-spacing: 2px; }
   #scramble small { display: block; font: 12px -apple-system, sans-serif; color: var(--muted); margin-top: 6px; }
 
+  #scrImg { display: flex; justify-content: center; margin: 8px 16px 0; height: 96px; }
+  #scrImg:empty { display: none; }
+  #scrImg svg { height: 100%; width: auto; max-width: 100%; }
+
   #pad { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
     touch-action: none; min-height: 200px; }
   #time { font: 700 clamp(64px, 22vw, 120px)/1 ui-monospace, "SF Mono", Menlo, Consolas, monospace;
@@ -52,7 +56,7 @@
   #hint { color: var(--muted); font-size: 14px; margin-top: 14px; height: 18px; }
   body.holding #time { color: var(--hold); }
   body.ready #time { color: var(--ready); }
-  body.running header, body.running #scramble, body.running #stats, body.running #list, body.running #hint { visibility: hidden; }
+  body.running header, body.running #scramble, body.running #stats, body.running #list, body.running #hint, body.running #scrImg { visibility: hidden; }
 
   #stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin: 0 16px; }
   .stat { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 8px 6px; text-align: center; }
@@ -93,6 +97,8 @@
 
   <div id="scramble"></div>
 
+  <div id="scrImg"></div>
+
   <div id="pad">
     <div id="time">0.00</div>
     <div id="hint">Hold fingeren på skærmen, og slip for at starte</div>
@@ -122,6 +128,7 @@
   <dialog id="menuDlg">
     <label class="opt">15 sek. inspektion <input type="checkbox" id="optInspect"></label>
     <label class="opt">Skjul tid under løsning <input type="checkbox" id="optHide"></label>
+    <label class="opt">Vis billede af scramble <input type="checkbox" id="optImg"></label>
     <button class="wide" id="newScr">Nyt scramble</button>
     <h3 id="menuSess">Session</h3>
     <button class="wide" id="newSess">Ny session</button>
@@ -154,17 +161,24 @@
     state.cur = s.id; save();
   }
   state.last = state.last || {};
+  if (state.showImg === undefined) state.showImg = true;
   if (!state.sessions.length) state.cur = newSession("333", "Session 1").id;
   const sess = () => state.sessions.find(s => s.id === state.cur) || state.sessions[0];
   const solves = () => sess().solves;
 
   // ---------- puzzles & scrambles ----------
+  // [id, name, csTimer scramble type, length, csTimer image type]
   const PUZZLES = [
-    ["222", "2x2"], ["333", "3x3"], ["444", "4x4"], ["555", "5x5"], ["666", "6x6"], ["777", "7x7"],
-    ["333oh", "3x3 OH"], ["333bf", "3x3 Blind"], ["pyram", "Pyraminx"], ["skewb", "Skewb"],
-    ["minx", "Megaminx"], ["clock", "Clock"],
+    ["222", "2x2", "222so", 0, "222"], ["333", "3x3", "333", 0, "333"],
+    ["444", "4x4", "444wca", 0, "444"], ["555", "5x5", "555wca", 60, "555"],
+    ["666", "6x6", "666wca", 80, "666"], ["777", "7x7", "777wca", 100, "777"],
+    ["333oh", "3x3 OH", "333", 0, "333"], ["333bf", "3x3 Blind", "333ni", 0, "333"],
+    ["pyram", "Pyraminx", "pyrso", 10, "pyrso"], ["skewb", "Skewb", "skbso", 0, "skbso"],
+    ["minx", "Megaminx", "mgmp", 70, "mgmp"], ["sq1", "Square-1", "sqrs", 0, "sqrs"],
+    ["clock", "Clock", "clkwca", 0, "clkwca"],
   ];
-  const puzzleName = id => (PUZZLES.find(p => p[0] === id) || [id, id])[1];
+  const puzzleInfo = id => PUZZLES.find(p => p[0] === id) || PUZZLES[1];
+  const puzzleName = id => puzzleInfo(id)[1];
 
   // NxN random-move scramble. Wide moves: Rw = 2 layers, 3Rw = 3 layers.
   const AXIS = { U: 0, D: 0, R: 1, L: 1, F: 2, B: 2 };
@@ -225,10 +239,52 @@
       case "skewb": return cornerTwistScramble("RULB", 8 + rnd(3), false);
       case "minx": return megaScramble();
       case "clock": return clockScramble();
+      case "sq1": return "Kunne ikke lave Square-1-scramble. Tryk for at prøve igen.";
       default: return cubeScramble(3, 20);
     }
   }
-  let scramble = makeScramble();
+  // ---------- csTimer scrambles (runs in a web worker) ----------
+  // csTimer makes random-state scrambles like in competitions. The simple
+  // generator above is only a fallback if the worker can't run.
+  const cst = (() => {
+    let worker = null, id = 0; const waiting = {};
+    try {
+      worker = new Worker("cstimer_module.js");
+      worker.onmessage = e => { const [i, , ret] = e.data; waiting[i]?.resolve(ret); delete waiting[i]; };
+      worker.onerror = () => { worker = null; for (const k in waiting) { waiting[k].reject(); delete waiting[k]; } };
+    } catch { worker = null; }
+    return (type, args, timeout = 8000) => new Promise((resolve, reject) => {
+      if (!worker) return reject();
+      const i = ++id; waiting[i] = { resolve, reject };
+      worker.postMessage([i, type, args]);
+      setTimeout(() => { if (waiting[i]) { delete waiting[i]; reject(); } }, timeout);
+    });
+  })();
+  const fetchScramble = p => {
+    const [, , type, len] = puzzleInfo(p);
+    return cst("scramble", [type, len]).then(s => s && s.split("\n").map(l => l.trim()).join("\n").trim());
+  };
+
+  let scramble = "", scrToken = 0;
+  const ready = {};  // puzzle -> next scramble made in advance
+  function prefetch(p) {
+    if (ready[p]) return;
+    ready[p] = fetchScramble(p).catch(() => null);
+  }
+  async function newScramble() {
+    const p = sess().puzzle, token = ++scrToken;
+    let next = ready[p] ? await ready[p] : null;
+    delete ready[p];
+    if (token !== scrToken) return;
+    if (!next) {
+      $("scramble").className = ""; $("scramble").innerHTML = "Laver scramble …";
+      next = await fetchScramble(p).catch(() => null);
+      if (token !== scrToken) return;
+    }
+    scramble = next || makeScramble();
+    renderScramble();
+    prefetch(p);
+  }
 
   // ---------- formatting & stats ----------
   const value = s => s.pen === "dnf" ? Infinity : s.ms + (s.pen === 2 ? 2000 : 0);
@@ -257,6 +313,12 @@
     el.className = scramble.length > 130 ? "long" : scramble.length > 70 ? "mid" : "";
     el.innerHTML = scramble.replace(/\n/g, "<br>") + "<small>Tryk her for nyt scramble</small>";
     el.scrollTop = 0;
+    const img = $("scrImg"), shown = scramble;
+    if (!state.showImg) { img.innerHTML = ""; return; }
+    cst("image", [shown, puzzleInfo(sess().puzzle)[4]]).then(svg => {
+      // give the image a viewBox so it scales to fit the box
+      if (shown === scramble) img.innerHTML = (svg || "").replace(/<svg width="([\d.]+)" height="([\d.]+)"/, '<svg viewBox="0 0 $1 $2"');
+    }).catch(() => { img.innerHTML = ""; });
   }
   function renderSelects() {
     const cur = sess();
@@ -340,7 +402,7 @@
     solves().push(s); save();
     timeEl.textContent = fmtSolve(s);
     hintEl.textContent = "Tryk på en tid nedenfor for +2, DNF eller slet";
-    scramble = makeScramble(); renderScramble(); render();
+    newScramble(); render();
     releaseWake();
     // ignore the release of this same touch
     ignoreNextRelease = true;
@@ -396,7 +458,7 @@
   // ---------- sessions ----------
   function switchTo(id) {
     state.cur = id; state.last[sess().puzzle] = id; save();
-    scramble = makeScramble(); renderScramble(); render();
+    newScramble(); render();
     timeEl.textContent = "0.00";
     hintEl.textContent = "Hold fingeren på skærmen, og slip for at starte";
   }
@@ -420,13 +482,14 @@
   };
 
   $("menuBtn").onclick = () => {
-    $("optInspect").checked = state.inspect; $("optHide").checked = state.hide;
+    $("optInspect").checked = state.inspect; $("optHide").checked = state.hide; $("optImg").checked = state.showImg;
     $("menuSess").textContent = `Session: ${puzzleName(sess().puzzle)} – ${sess().name}`;
     $("menuDlg").showModal();
   };
   $("optInspect").onchange = e => { state.inspect = e.target.checked; save(); };
   $("optHide").onchange = e => { state.hide = e.target.checked; save(); };
-  $("newScr").onclick = () => { scramble = makeScramble(); renderScramble(); $("menuDlg").close(); };
+  $("optImg").onchange = e => { state.showImg = e.target.checked; save(); if (scramble) renderScramble(); };
+  $("newScr").onclick = () => { newScramble(); $("menuDlg").close(); };
   $("newSess").onclick = () => { if (createSession()) $("menuDlg").close(); };
   $("renameSess").onclick = () => {
     const name = prompt("Nyt navn til sessionen:", sess().name);
@@ -444,12 +507,25 @@
     $("menuDlg").close();
   };
   $("menuClose").onclick = () => $("menuDlg").close();
-  $("scramble").onclick = () => { if (phase === "idle") { scramble = makeScramble(); renderScramble(); } };
+  $("scramble").onclick = () => { if (phase === "idle") newScramble(); };
 
-  renderScramble(); render(); tick();
+  newScramble(); render(); tick();
 
   // ---------- offline ----------
-  if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
+  if ("serviceWorker" in navigator) {
+    const hadController = !!navigator.serviceWorker.controller;
+    navigator.serviceWorker.register("sw.js", { updateViaCache: "none" }).then(r => {
+      // check for a new version every time the app comes back to the front
+      document.addEventListener("visibilitychange", () => { if (!document.hidden) r.update().catch(() => {}); });
+    }).catch(() => {});
+    // a new version took over: reload once, but never in the middle of a solve
+    let reloaded = false;
+    navigator.serviceWorker.addEventListener("controllerchange", () => {
+      if (!hadController || reloaded) return;
+      const go = () => { if (phase === "idle") { reloaded = true; location.reload(); } else setTimeout(go, 1000); };
+      go();
+    });
+  }
 })();
 </script>
 </body>
