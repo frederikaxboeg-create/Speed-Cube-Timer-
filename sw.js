@@ -1,6 +1,6 @@
 // Gemmer appens filer på telefonen, så den virker uden internet.
 // Hæv versionsnummeret, når filerne ændres, så telefonen henter de nye.
-const CACHE = "cubetimer-v1";
+const CACHE = "cubetimer-v2";
 const FILES = ["./", "index.html", "manifest.json", "icon-180.png", "icon-192.png", "icon-512.png"];
 
 self.addEventListener("install", e => {
